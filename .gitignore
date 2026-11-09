@@ -1,0 +1,11 @@
+# WAVs intermediários (≈97 MB): regeneráveis; o jogo usa os MP3 de audio/enc/
+audio/render/
+audio/tmp/
+# build de teste com o robô (python3 build.py --test)
+dist/teste.html
+# memória local da ferramenta e arquivos de sistema
+.dsh-project-memory/
+.DS_Store
+
+# PRD fica fora do repositório público (decisão de Andre, 09/11/2026)
+Mata-Adentro-PRD.pdf
