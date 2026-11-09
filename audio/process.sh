@@ -11,9 +11,19 @@ loop_music () { # nome L
   local n=$1 L=$2
   $FF -i $R/$n.wav -ss $(echo "$L-1" | bc) -t $(echo "$L+2" | bc) -af "volume=0dB" -ar 44100 -ac 2 -c:a libmp3lame -b:a 96k $E/mus_$n.mp3
 }
+fases () { # músicas das fases da campanha (render.mjs); L = scores/loops.json
+  loop_music mangue 48
+  loop_music serra 40
+  loop_music copa 48
+  loop_music caverna 40
+}
+# "bash process.sh fases" codifica só as faixas novas, sem tocar nos mp3 da v1
+if [ "${1:-}" = "fases" ]; then fases; rm -rf tmp; ls -la $E/mus_{mangue,serra,copa,caverna}.mp3; exit 0; fi
+
 loop_music tema 40
 loop_music mata 60
 loop_music sub 30
+fases
 
 # Ambientes: laço por crossfade de 3 s → P (periódico), depois margem de 1 s
 amb () { # nome L

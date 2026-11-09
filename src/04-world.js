@@ -2,12 +2,36 @@
 // Cada área sorteia um modelo de um catálogo feito à mão; a semente só decide variações
 // dentro de faixas testadas (ritmos, larguras, tesouros, presença de cipó) — toda área é vencível.
 
-function newLevel(kind, len) {
+function newLevel(kind, len, theme = 'mata') {
   return {
-    kind, len, floor: kind === 'surface' ? GROUND : FLOOR_U,
+    kind, len, theme, floor: kind === 'surface' ? GROUND : FLOOR_U, areas: Math.round(len / AREA_W), noGround: false,
     gaps: [], crocs: [], sands: [], logs: [], vines: [], ladders: [], fires: [],
     treasures: [], signs: [], scorpions: [], props: [], announce: [], idol: null,
+    // v2: plataformas, zonas e perigos das fases novas (listas vazias = comportamento da fase 1)
+    platforms: [], muds: [], tides: [], currents: [], waterfalls: [],
+    rocks: [], crabs: [], bats: [], stalactites: [], monkeys: [], ziplines: [], carts: [],
   };
+}
+
+// ---------------------------------------------------------- campanha: 5 fases
+const FASES = [
+  null,
+  { id: 1, key: 'mata', nome: 'MATA ADENTRO', reliquia: 'ÍDOLO DE OURO', relic: 'idolo', areas: 10, music: 'mus_mata', amb: 'amb_mata', abertura: 'abertura' },
+  { id: 2, key: 'mangue', nome: 'MANGUE NA MARÉ', reliquia: 'CONCHA DOURADA', relic: 'concha', areas: 8, music: 'mus_mangue', amb: 'amb_mangue', abertura: 'f2_abertura' },
+  { id: 3, key: 'serra', nome: 'SERRA E CACHOEIRA', reliquia: 'MÁSCARA DE PEDRA-VERDE', relic: 'mascara', areas: 8, music: 'mus_serra', amb: 'amb_serra', abertura: 'f3_abertura' },
+  { id: 4, key: 'copa', nome: 'COPA DAS ÁRVORES', reliquia: 'PENA DO GAVIÃO-REAL', relic: 'pena', areas: 8, music: 'mus_copa', amb: 'amb_copa', abertura: 'f4_abertura' },
+  { id: 5, key: 'caverna', nome: 'CAVERNA DO OURO', reliquia: 'CORAÇÃO DE OURO', relic: 'coracao', areas: 8, music: 'mus_caverna', amb: 'amb_caverna', abertura: 'f5_abertura' },
+];
+const LAST_FASE = 5;
+const FASE_GEN = {}; // preenchido por src/04b-fases.js
+function generateCampaign(seed, fase = 1) {
+  if (fase === 1 || !FASE_GEN[fase]) return generateWorld(seed);
+  // sub-semente determinística por fase: a mesma trilha gera sempre as mesmas 5 fases
+  const w = FASE_GEN[fase]((seed * 7919 + fase * 104729) >>> 0);
+  w.seed = seed;
+  w.surface.treasures.forEach(t => t.taken = false);
+  w.surface.announce.sort((a, b) => a.x - b.x);
+  return w;
 }
 
 // ---------------------------------------------------------- peças do catálogo
@@ -157,7 +181,7 @@ function generateWorld(seed) {
 
   // Área 10 — clareira das ruínas com o ídolo
   S.ladders.push({ x: ax(10) + 150, top: GROUND, bottom: H + 80, link: { level: 1, end: 'out' }, hole: true });
-  S.idol = { x: ax(10) + 730, y: GROUND - 44, taken: false };
+  S.idol = { x: ax(10) + 730, y: GROUND - 44, taken: false, relic: 'idolo' };
   S.treasures.push({ x: ax(10) + 330, y: GROUND - 22, type: 'coin' }, { x: ax(10) + 470, y: GROUND - 110, type: 'coin' });
   areaTemplates.push('ruinas');
 

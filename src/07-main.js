@@ -8,11 +8,14 @@ const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
 
 const App = {
-  state: 'title',     // title | options | intro | play | pause | win | lose | credits
+  state: 'title',     // title | options | intro | play | pause | phaseClear | win | lose | credits
   prevState: null,
   game: null,
   seed: Number(params.get('seed')) || DEFAULT_SEED,
   record: store.get('mataAdentro.recorde', null),
+  fase: clamp(Number(params.get('fase')) || 1, 1, LAST_FASE),   // ?fase=N abre direto numa fase (teste)
+  progress: store.get('mataAdentro.progresso', null),           // { seed, fase, score, lives }: início da fase mais avançada
+  faseMax: store.get('mataAdentro.faseMax', 1),
   menu: 0, t: 0, stateT: 0,
   iris: null,         // { t, dur, dir: 'out'|'in', then }
   toast: null,
@@ -35,11 +38,12 @@ function updateMusic() {
   if (!Snd.started) return;
   const s = App.state, g = App.game;
   if (s === 'title' || s === 'options' || s === 'credits') { Snd.setMusic('mus_tema'); Snd.setAmbient(s === 'credits' ? null : 'amb_mata'); }
-  else if (s === 'intro') { Snd.setMusic('mus_tema'); Snd.setAmbient('amb_mata'); }
+  else if (s === 'intro') { Snd.setMusic('mus_tema'); Snd.setAmbient(g && Snd.has(g.fase.amb) ? g.fase.amb : 'amb_mata'); }
   else if ((s === 'play' || s === 'pause') && g && !g.over) {
-    const under = g.levelId !== 'surface';
-    Snd.setMusic(under ? 'mus_sub' : 'mus_mata', { rate: g.hurry ? 1.16 : 1 });
-    Snd.setAmbient(under ? 'amb_sub' : 'amb_mata');
+    const under = g.levelId !== 'surface', f = g.fase;
+    // faixa da fase; se o arquivo não estiver embutido, a trilha da mata segura
+    Snd.setMusic(under ? 'mus_sub' : Snd.has(f.music) ? f.music : 'mus_mata', { rate: g.hurry ? 1.16 : 1 });
+    Snd.setAmbient(under ? 'amb_sub' : Snd.has(f.amb) ? f.amb : 'amb_mata');
   }
 }
 
@@ -52,23 +56,33 @@ function whenAudioReady(fn) {
   showToast('CARREGANDO SOM...', 10);
   Snd.loading.then(() => { App.toast = null; fn(); });
 }
-function startGame() {
-  App.game = new Game(App.seed);
+// phase: fase a jogar; carry: pontos e vidas que vêm da fase anterior (ou do início da fase, ao tentar de novo)
+function startGame(phase = 1, carry = {}) {
+  App.game = new Game(App.seed, { phase, score: carry.score, lives: carry.lives });
   App.game.god = DEBUG && App.god;
   App.newRecord = false;
+  if (phase > App.faseMax) { App.faseMax = phase; store.set('mataAdentro.faseMax', phase); }
+  if (phase > 1 && (!App.progress || App.progress.seed !== App.seed || phase >= App.progress.fase)) {
+    App.progress = { seed: App.seed, fase: phase, score: App.game.score, lives: App.game.lives };
+    store.set('mataAdentro.progresso', App.progress);
+  }
   setState('intro');
   Snd.stopVoice();
-  Snd.voice('abertura');
+  Snd.voice(FASES[phase].abertura);
   updateMusic();
 }
+function nextPhase(g) { irisTo(() => startGame(g.phase + 1, { score: g.score, lives: Math.min(5, g.lives + 1) })); }
+function retryPhase(g) { irisTo(() => startGame(g.phase, { score: g.startScore, lives: 3 })); }
+function toTitle() { irisTo(() => { setState('title'); App.game = null; Snd.stopVoice(); updateMusic(); }); }
 function beginPlay() {
   setState('play');
   updateMusic();
 }
 function finishGame(kind) {
   const g = App.game;
-  if (!App.record || g.score > App.record.score) {
-    App.record = { score: g.score, seed: g.seed };
+  const end = kind !== 'win' || g.final; // a campanha só termina na derrota ou na última relíquia
+  if (end && (!App.record || g.score > App.record.score)) {
+    App.record = { score: g.score, seed: g.seed, fase: g.phase };
     store.set('mataAdentro.recorde', App.record);
     App.newRecord = true;
   }
@@ -76,7 +90,9 @@ function finishGame(kind) {
     Snd.setAmbient(null);
     Snd.setMusic('mus_vitoria', { loop: false, fade: 0.3 });
     Snd.stopVoice();
-    setTimeout(() => Snd.voice('vitoria'), 900);
+    if (g.final) { App.progress = null; store.set('mataAdentro.progresso', null); }
+    const line = g.final ? 'final' : g.phase === 1 ? 'transicao' : 'reliquia';
+    setTimeout(() => Snd.voice(line), 900);
   } else {
     Snd.setAmbient(null);
     Snd.setMusic('mus_derrota', { loop: false, fade: 0.3 });
@@ -138,7 +154,7 @@ function step(dt) {
     if (Input.pressed('back')) setState('title');
   } else if (s === 'intro') {
     App.titleCam += dt * 30;
-    if ((App.stateT > 1.2 && (Input.pressed('confirm') || Input.pressed('jump'))) || App.stateT > 15) {
+    if ((App.stateT > 1.2 && (Input.pressed('confirm') || Input.pressed('jump'))) || App.stateT > (g && g.phase > 1 ? 12 : 15)) {
       Snd.stopVoice();
       irisTo(() => beginPlay());
     }
@@ -159,7 +175,7 @@ function step(dt) {
     }
     if (g.over) {
       g.overT += dt;
-      if (g.overT > (g.over === 'win' ? 3.2 : 1.0)) setState(g.over === 'win' ? 'win' : 'lose');
+      if (g.overT > (g.over === 'win' ? 3.2 : 1.0)) setState(g.over === 'win' ? (g.final ? 'win' : 'phaseClear') : 'lose');
     }
   } else if (s === 'pause') {
     const items = [{ label: 'CONTINUAR', key: 'resume' }].concat(volumeItems(), [{ label: 'SAIR PARA O INÍCIO', key: 'quit' }]);
@@ -170,20 +186,24 @@ function step(dt) {
       else if (k === 'mute') Snd.toggleMute();
     }, { horizontal: (i, d) => adjustVolume(items[i], d) });
     if (Input.pressed('pause') && App.stateT > 0.1) setState('play');
-  } else if (s === 'win' || s === 'lose') {
+  } else if (s === 'win' || s === 'lose' || s === 'phaseClear') {
     g.update(dt);
-    const items = s === 'win' ? [{ label: 'VER CRÉDITOS', act: () => irisTo(() => startCredits()) }, { label: 'JOGAR DE NOVO', act: () => irisTo(() => startGame()) }]
-      : [{ label: 'JOGAR DE NOVO', act: () => irisTo(() => startGame()) }, { label: 'TELA INICIAL', act: () => irisTo(() => { setState('title'); App.game = null; Snd.stopVoice(); updateMusic(); }) }];
+    const items = s === 'win' ? [{ label: 'VER CRÉDITOS', act: () => irisTo(() => startCredits()) }, { label: 'JOGAR DE NOVO', act: () => irisTo(() => startGame(1)) }]
+      : s === 'phaseClear' ? [{ label: 'PRÓXIMA FASE', act: () => nextPhase(g) }, { label: 'TELA INICIAL', act: toTitle }]
+      : [{ label: g.phase > 1 ? 'TENTAR A FASE DE NOVO' : 'JOGAR DE NOVO', act: () => retryPhase(g) }, { label: 'TELA INICIAL', act: toTitle }];
     App.endItems = items;
     if (App.stateT > 1.0) menuNav(items, i => items[i].act());
   } else if (s === 'credits') {
     if (App.stateT > 1 && (Input.pressed('confirm') || Input.pressed('back') || Input.pressed('jump'))) irisTo(() => { Snd.stopVoice(); setState('title'); App.game = null; updateMusic(); });
-    if (App.stateT > 34) irisTo(() => { setState('title'); App.game = null; updateMusic(); });
+    if (App.stateT > 38) irisTo(() => { setState('title'); App.game = null; updateMusic(); });
   }
 }
 function titleItems() {
+  const pr = App.progress;
+  const cont = pr && pr.fase > 1 ? [{ label: 'CONTINUAR · FASE ' + pr.fase, act: () => whenAudioReady(() => irisTo(() => { App.seed = pr.seed; startGame(pr.fase, { score: pr.score, lives: pr.lives }); })) }] : [];
   return [
-    { label: 'JOGAR', act: () => whenAudioReady(() => irisTo(() => startGame())) },
+    { label: App.fase > 1 ? 'JOGAR · FASE ' + App.fase : 'JOGAR', act: () => whenAudioReady(() => irisTo(() => startGame(App.fase))) },
+    ...cont,
     { label: 'NOVA TRILHA', act: () => { App.seed = 1 + Math.floor(Math.random() * 999999); showToast('NOVA TRILHA: SEMENTE ' + App.seed); } },
     { label: 'OPÇÕES', act: () => setState('options') },
     { label: 'CRÉDITOS', act: () => whenAudioReady(() => irisTo(() => startCredits())) },
@@ -196,12 +216,13 @@ function debugKeys(g) {
   for (let i = 0; i <= 9; i++) {
     if (Input.debugKey && Input.debugKey === 'Digit' + i) {
       const a = i === 0 ? 10 : i;
+      if (a > g.world.surface.areas) continue;
       g.levelId = 'surface'; g.p = g.newPlayer((a - 1) * AREA_W + 60, GROUND); g.cam = clamp(g.p.x - W * 0.42, 0, g.L.len - W);
     }
   }
   if (Input.debugKey === 'KeyG') { g.god = App.god = !g.god; showToast(g.god ? 'IMORTAL' : 'MORTAL'); }
   if (Input.debugKey === 'KeyH') g.debugBoxes = !g.debugBoxes;
-  if (Input.debugKey === 'KeyU') { g.switchLevel(0, g.world.under[0].ladders[0], -4); }
+  if (Input.debugKey === 'KeyU' && g.world.under.length) { g.switchLevel(0, g.world.under[0].ladders[0], -4); }
   Input.debugKey = null;
 }
 if (DEBUG) Input.on((type, code) => { if (type === 'key') Input.debugKey = code; });
@@ -219,6 +240,7 @@ function render(now) {
     drawHUD(g, now);
     if (s === 'pause') drawPause(now);
     if (s === 'win') drawWin(g, now);
+    if (s === 'phaseClear') drawPhaseClear(g, now);
     if (s === 'lose') drawLose(g, now);
   }
   drawSubtitle();
@@ -236,7 +258,7 @@ function drawIris() {
   const r = (ir.dir === 'out' ? 1 - smooth(k) : smooth(k)) * 620;
   let cx = W / 2, cy = H / 2;
   const g = App.game;
-  if (g && (App.state === 'play' || App.state === 'win' || App.state === 'lose')) { cx = clamp(g.p.x - g.cam, 0, W); cy = clamp(g.p.y - 32, 0, H); }
+  if (g && (App.state === 'play' || App.state === 'win' || App.state === 'lose' || App.state === 'phaseClear')) { cx = clamp(g.p.x - g.cam, 0, W); cy = clamp(g.p.y - 32, 0, H); }
   ctx.fillStyle = '#000';
   ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.arc(cx, cy, Math.max(0.1, r), 0, Math.PI * 2, true); ctx.fill('evenodd');
 }
@@ -250,14 +272,14 @@ function drawHUD(g, now) {
   const blink = g.time <= 10 && Math.floor(now / 250) % 2;
   drawText(ctx, 'TEMPO', W / 2, 8, 1, PAL.mist, 'center', null);
   drawText(ctx, fmtTime(g.time), W / 2, 18, 2, blink ? PAL.white : low ? '#ff6a4a' : PAL.white, 'center');
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < Math.max(3, g.lives); i++) {
     ctx.globalAlpha = i < g.lives ? 1 : 0.2;
     ctx.drawImage(Art.hatIcon, W - 270 + i * 34, 14);
   }
   ctx.globalAlpha = 1;
   const areaLabel = g.levelId === 'surface' ? 'ÁREA ' + g.area : 'SUBTERRÂNEO';
   drawText(ctx, areaLabel, W - 16, 14, 2, PAL.white, 'right');
-  drawText(ctx, (g.levelId === 'surface' ? g.area : '·') + '/10', W - 16, 4, 1, PAL.mist, 'right', null);
+  drawText(ctx, 'FASE ' + g.phase + ' · ' + (g.levelId === 'surface' ? g.area : '·') + '/' + g.world.surface.areas, W - 16, 4, 1, PAL.mist, 'right', null);
   if (g.god) drawText(ctx, 'IMORTAL', 220, 18, 1, PAL.red);
 }
 
@@ -294,12 +316,14 @@ function drawLogo(y, scale = 7) {
   ctx.restore();
 }
 
-function drawTitleScene(now, cam) {
-  drawSurfaceBack(ctx, cam, now);
+function drawTitleScene(now, cam, theme = 'mata') {
+  drawSurfaceBack(ctx, cam, now, theme);
   ctx.save(); ctx.translate(-Math.round(cam % AREA_W), 0);
-  ctx.drawImage(Art.ground, 0, GROUND - Art.groundTop); ctx.drawImage(Art.ground, AREA_W, GROUND - Art.groundTop);
+  if (theme === 'copa') drawPlatform(ctx, { look: 'branch', x1: -40, x2: AREA_W * 2, y: GROUND }, now);
+  else { const gr = themeArt(theme).ground; ctx.drawImage(gr, 0, GROUND - Art.groundTop); ctx.drawImage(gr, AREA_W, GROUND - Art.groundTop); }
   ctx.restore();
-  drawForeground(ctx, cam, now);
+  drawForeground(ctx, cam, now, theme);
+  if (theme === 'caverna') { ctx.fillStyle = 'rgba(4,8,6,0.35)'; ctx.fillRect(0, 0, W, H); }
 }
 
 function drawTitle(now) {
@@ -309,19 +333,25 @@ function drawTitle(now) {
   ctx.drawImage(Art.ze.run[f], 140 - ZE.OX, GROUND - ZE.OY);
   ctx.fillStyle = 'rgba(8,14,10,0.45)'; ctx.fillRect(0, 0, W, H);
   drawLogo(58, 7);
-  drawText(ctx, 'UMA CORRIDA PELA MATA ATLÂNTICA ATRÁS DO ÍDOLO DE OURO', W / 2, 126, 2, PAL.fog, 'center');
+  drawText(ctx, 'CINCO FASES PELA MATA ATLÂNTICA ATRÁS DAS RELÍQUIAS DE OURO', W / 2, 126, 2, PAL.fog, 'center');
   if (App.state === 'options') { drawOptionsPanel(); return; }
   const items = titleItems();
-  items.forEach((it, i) => button(it.label, W / 2, 170 + i * 36, App.menu === i, () => { App.menu = i; it.act(); }, 3));
+  const sp = items.length > 4 ? 30 : 36, y0 = items.length > 4 ? 160 : 170;
+  items.forEach((it, i) => button(it.label, W / 2, y0 + i * sp, App.menu === i, () => { App.menu = i; it.act(); }, 3));
   // recorde e semente
-  const rec = App.record ? fmtNum(App.record.score) + ' (TRILHA ' + App.record.seed + ')' : '—';
-  drawText(ctx, 'RECORDE: ' + rec, W / 2, 330, 2, PAL.gold2, 'center');
+  const rec = App.record ? fmtNum(App.record.score) + ' (TRILHA ' + App.record.seed + (App.record.fase ? ' · FASE ' + App.record.fase : '') + ')' : '—';
+  drawText(ctx, 'RECORDE: ' + rec + (App.faseMax > 1 ? ' · MAIS LONGE: FASE ' + App.faseMax : ''), W / 2, 330, 2, PAL.gold2, 'center');
   drawText(ctx, 'TRILHA ATUAL: SEMENTE ' + App.seed + (App.seed === DEFAULT_SEED ? ' (PADRÃO)' : ''), W / 2, 352, 2, PAL.fog, 'center');
   // controles
   ctx.fillStyle = 'rgba(8,14,10,0.72)'; ctx.fillRect(80, 384, 800, 132);
   ctx.fillStyle = PAL.goldD; ctx.fillRect(80, 384, 800, 2);
   drawText(ctx, 'CONTROLES', W / 2, 392, 2, PAL.gold, 'center');
-  const rows = [
+  const rows = isTouchUI() ? [
+    ['DIRECIONAL ← →', 'ANDAR', ''],
+    ['BOTÃO PULAR', 'PULAR / SOLTAR CIPÓ', ''],
+    ['DIRECIONAL ↓ ↑', 'DESCER / SUBIR ESCADA', ''],
+    ['BOTÃO DE PAUSA', 'PAUSA E SOM', ''],
+  ] : [
     ['← → OU A D', 'ANDAR', 'ANALÓGICO'],
     ['ESPAÇO W ↑', 'PULAR / SOLTAR CIPÓ', 'A · X'],
     ['↓ ↑ OU S W', 'DESCER / SUBIR ESCADA', 'DIRECIONAL'],
@@ -332,8 +362,8 @@ function drawTitle(now) {
     drawText(ctx, r[1], 290, 416 + i * 22, 2, PAL.gold2);
     drawText(ctx, r[2], 860, 416 + i * 22, 2, PAL.mist, 'right');
   });
-  if (!Snd.started) drawText(ctx, 'O SOM COMEÇA NO PRIMEIRO CLIQUE', W / 2, 526, 1, PAL.mist, 'center', null);
-  else drawText(ctx, (Input.hasPad ? 'CONTROLE CONECTADO · ' : '') + 'ENTER OU CLIQUE PARA ESCOLHER', W / 2, 526, 1, PAL.mist, 'center', null);
+  if (!Snd.started) drawText(ctx, isTouchUI() ? 'O SOM COMEÇA NO PRIMEIRO TOQUE' : 'O SOM COMEÇA NO PRIMEIRO CLIQUE', W / 2, 526, 1, PAL.mist, 'center', null);
+  else drawText(ctx, (Input.hasPad ? 'CONTROLE CONECTADO · ' : '') + (isTouchUI() ? 'TOQUE NA OPÇÃO PARA ESCOLHER' : 'ENTER OU CLIQUE PARA ESCOLHER'), W / 2, 526, 1, PAL.mist, 'center', null);
 }
 
 function drawOptionsPanel() {
@@ -344,7 +374,7 @@ function drawOptionsPanel() {
     App.menu = i;
     if (it.key === 'back') setState('title'); else if (it.key === 'mute') Snd.toggleMute(); else adjustVolume(it, App.mouse.x > W / 2 ? 1 : -1);
   }, 2));
-  drawText(ctx, '← → AJUSTA · CLIQUE À ESQUERDA OU À DIREITA', W / 2, 440, 1, PAL.mist, 'center', null);
+  drawText(ctx, isTouchUI() ? 'TOQUE À ESQUERDA OU À DIREITA PARA AJUSTAR' : '← → AJUSTA · CLIQUE À ESQUERDA OU À DIREITA', W / 2, 440, 1, PAL.mist, 'center', null);
 }
 
 function drawPause(now) {
@@ -362,13 +392,37 @@ function drawPause(now) {
 
 function panel(y, h) { ctx.fillStyle = 'rgba(6,10,8,0.78)'; ctx.fillRect(170, y, 620, h); ctx.fillStyle = PAL.goldD; ctx.fillRect(170, y, 620, 2); ctx.fillRect(170, y + h - 2, 620, 2); }
 
+function drawRelicSpin(g, now, x, y) {
+  const img = Art.relics[g.fase.relic] || Art.idol, sx = Math.cos(now / 500);
+  drawGlow(ctx, x, y, 70, 'rgba(255,220,120,0.35)');
+  ctx.save(); ctx.translate(x, y); ctx.scale(2 * (Math.abs(sx) < 0.08 ? 0.08 : sx), 2); ctx.drawImage(img, -img.width / 2, -img.height / 2); ctx.restore();
+}
+function drawPhaseClear(g, now) {
+  const r = g.result, k = App.stateT, nx = FASES[g.phase + 1];
+  panel(40, 470);
+  drawText(ctx, 'FASE ' + g.phase + ' CONCLUÍDA!', W / 2, 60, 4, PAL.gold2, 'center');
+  drawRelicSpin(g, now, W / 2, 140);
+  const rows = [
+    ['PONTOS ACUMULADOS', fmtNum(r.base - r.idol)],
+    [g.fase.reliquia, '+' + fmtNum(r.idol)],
+    ['TEMPO RESTANTE ' + fmtTime(r.time) + ' × 20', '+' + fmtNum(r.bonusTime)],
+    ['VIDA EXTRA PARA A PRÓXIMA FASE', g.lives >= 5 ? 'MÁX. 5' : '+1'],
+  ];
+  rows.forEach((row, i) => { if (k < 0.3 + i * 0.3) return; drawText(ctx, row[0], 210, 196 + i * 28, 2, PAL.white); drawText(ctx, row[1], 750, 196 + i * 28, 2, PAL.gold2, 'right'); });
+  if (k > 1.5) {
+    ctx.fillStyle = PAL.goldD; ctx.fillRect(210, 312, 540, 2);
+    drawText(ctx, 'TOTAL', 210, 324, 3, PAL.white); drawText(ctx, fmtNum(r.total), 750, 324, 3, PAL.gold2, 'right');
+    if (nx) drawText(ctx, 'A SEGUIR: FASE ' + nx.id + ' · ' + nx.nome, W / 2, 366, 2, PAL.turq, 'center');
+  }
+  if (k > 1.0) (App.endItems || []).forEach((it, i) => button(it.label, W / 2, 402 + i * 36, App.menu === i, () => { App.menu = i; it.act(); }, 2));
+}
 function drawWin(g, now) {
   const r = g.result, k = App.stateT;
   panel(70, 400);
-  drawText(ctx, 'O ÍDOLO É SEU!', W / 2, 92, 4, PAL.gold2, 'center');
+  drawText(ctx, g.phase >= LAST_FASE ? 'AS CINCO RELÍQUIAS SÃO SUAS!' : 'O ÍDOLO É SEU!', W / 2, 92, g.phase >= LAST_FASE ? 3 : 4, PAL.gold2, 'center');
   const rows = [
     ['TESOUROS E PONTOS', fmtNum(r.base - r.idol)],
-    ['ÍDOLO DE OURO', '+' + fmtNum(r.idol)],
+    [g.fase.reliquia, '+' + fmtNum(r.idol)],
     ['TEMPO RESTANTE ' + fmtTime(r.time) + ' × 20', '+' + fmtNum(r.bonusTime)],
     ['VIDAS RESTANTES ' + r.lives + ' × 1.000', '+' + fmtNum(r.bonusLives)],
   ];
@@ -392,12 +446,14 @@ function drawLose(g, now) {
   drawText(ctx, g.loseReason === 'tempo' ? 'O TEMPO ACABOU' : 'AS VIDAS ACABARAM', W / 2, 184, 2, PAL.fog, 'center');
   drawText(ctx, 'PONTOS: ' + fmtNum(g.score), W / 2, 222, 3, PAL.gold2, 'center');
   if (App.newRecord && g.score > 0) drawText(ctx, '★ NOVO RECORDE ★', W / 2, 262, 2, PAL.turq, 'center');
-  drawText(ctx, 'ÁREA ALCANÇADA: ' + (g.levelId === 'surface' ? g.area : 'SUBTERRÂNEO') + ' · TRILHA ' + g.seed, W / 2, 288, 1, PAL.mist, 'center', null);
+  drawText(ctx, 'FASE ' + g.phase + ' · ÁREA ALCANÇADA: ' + (g.levelId === 'surface' ? g.area : 'SUBTERRÂNEO') + ' · TRILHA ' + g.seed, W / 2, 288, 1, PAL.mist, 'center', null);
+  if (g.phase > 1) drawText(ctx, 'TENTAR DE NOVO RECOMEÇA A FASE COM 3 VIDAS', W / 2, 304, 1, PAL.mist, 'center', null);
   if (App.stateT > 1.0) (App.endItems || []).forEach((it, i) => button(it.label, W / 2, 326 + i * 38, App.menu === i, () => { App.menu = i; it.act(); }, 2));
 }
 
 function drawIntro(now) {
-  const k = App.stateT;
+  const k = App.stateT, g = App.game;
+  if (g && g.phase > 1) { drawPhaseIntro(g, now, k); return; }
   drawTitleScene(now, 400 + App.titleCam * 1.5);
   const zx = clamp(-60 + (k - 9) * 120, -80, 300);
   if (k > 9) ctx.drawImage(Art.ze.run[Math.floor(now / 70) % 8], Math.round(zx - ZE.OX), GROUND - ZE.OY);
@@ -405,7 +461,25 @@ function drawIntro(now) {
   // barras de cinema
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, 44); ctx.fillRect(0, H - 44, W, 44);
   if (k > 11) { ctx.globalAlpha = clamp((k - 11) / 0.6, 0, 1); drawLogo(130, 7); ctx.globalAlpha = 1; }
-  if (k > 1.2) drawText(ctx, 'ESPAÇO PARA PULAR A ABERTURA', W - 20, 18, 1, PAL.mist, 'right', null);
+  if (k > 1.2) drawText(ctx, isTouchUI() ? 'TOQUE PARA PULAR A ABERTURA' : 'ESPAÇO PARA PULAR A ABERTURA', W - 20, 18, 1, PAL.mist, 'right', null);
+}
+
+function drawPhaseIntro(g, now, k) {
+  const f = g.fase;
+  drawTitleScene(now, 400 + App.titleCam * 1.5, f.key);
+  const zx = clamp(-60 + (k - 6) * 120, -80, 300);
+  if (k > 6) ctx.drawImage(Art.ze.run[Math.floor(now / 70) % 8], Math.round(zx - ZE.OX), GROUND - ZE.OY);
+  ctx.fillStyle = `rgba(0,0,0,${clamp(1 - k / 1.5, 0, 1)})`; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, 44); ctx.fillRect(0, H - 44, W, 44);
+  if (k > 0.8) {
+    ctx.globalAlpha = clamp((k - 0.8) / 0.6, 0, 1);
+    drawText(ctx, 'FASE ' + f.id + ' DE ' + LAST_FASE, W / 2, 96, 3, PAL.fog, 'center');
+    drawText(ctx, f.nome, W / 2 + 4, 140, 6, '#1a0e04', 'center', null); drawText(ctx, f.nome, W / 2, 136, 6, PAL.gold2, 'center', null);
+    drawText(ctx, 'RELÍQUIA: ' + f.reliquia, W / 2, 200, 2, PAL.turq, 'center');
+    drawText(ctx, 'VIDAS ' + g.lives + ' · PONTOS ' + fmtNum(g.score), W / 2, 226, 2, PAL.white, 'center');
+    ctx.globalAlpha = 1;
+  }
+  if (k > 1.2) drawText(ctx, isTouchUI() ? 'TOQUE PARA COMEÇAR' : 'ESPAÇO PARA COMEÇAR', W - 20, 18, 1, PAL.mist, 'right', null);
 }
 
 const CREDITS = [
@@ -416,7 +490,8 @@ const CREDITS = [
   ['CÓDIGO', 'head'], ['ESCRITO PELO CLAUDE (ANTHROPIC)', 'line'], ['JAVASCRIPT PURO E CANVAS 2D, UM ÚNICO ARQUIVO', 'small'], ['', ''],
   ['ARTE', 'head'], ['DESENHADA EM CÓDIGO PELO CLAUDE', 'line'], ['PIXEL ART SEM NENHUMA IMAGEM EXTERNA', 'small'], ['', ''],
   ['MÚSICA E EFEITOS', 'head'], ['COMPOSTOS PELO CLAUDE NOTA A NOTA', 'line'], ['PARTITURAS EM CÓDIGO, METAIS E PERCUSSÃO BRASILEIRA', 'small'], ['EFEITOS SINTETIZADOS AO VIVO PELA WEB AUDIO API', 'small'], ['', ''],
-  ['NARRAÇÃO', 'head'], ['VOZ CLONADA DE ANDRÉ NO VOICESTUDIO', 'line'], ['10 FALAS GERADAS UMA ÚNICA VEZ E EMBUTIDAS NO JOGO', 'small'], ['', ''],
+  ['NARRAÇÃO', 'head'], ['VOZ CLONADA DE ANDRÉ NO VOICESTUDIO', 'line'], ['FALAS GERADAS UMA ÚNICA VEZ E EMBUTIDAS NO JOGO', 'small'], ['', ''],
+  ['FASES', 'head'], ['MATA · MANGUE · SERRA · COPA · CAVERNA', 'line'], ['CENÁRIOS DA MATA ATLÂNTICA, DO LITORAL À SERRA', 'small'], ['', ''],
   ['HOMENAGEM', 'head'], ['AO GÊNERO DE PLATAFORMA NA SELVA DOS ANOS 80', 'small'], ['NOME, HERÓI, ARTE, TRILHA E VOZ TOTALMENTE ORIGINAIS', 'small'], ['', ''],
   ['OBRIGADO POR JOGAR!', 'sub'],
 ];
@@ -431,21 +506,22 @@ function drawCredits(now) {
     if (y > -40 && y < H + 20 && txt) drawText(ctx, txt, W / 2, y, sc, col, 'center', kind === 'small' ? null : PAL.ink);
     y += kind === 'title' ? 56 : kind === 'small' ? 18 : 28;
   }
-  if (y < 200) ctx.drawImage(Art.idol, W / 2 - 24, Math.max(200, y + 20));
-  drawText(ctx, 'ENTER PARA VOLTAR', W - 20, H - 18, 1, PAL.mist, 'right', null);
+  if (y < 200) ['idolo', 'concha', 'mascara', 'pena', 'coracao'].forEach((k, i) => { const im = Art.relics[k]; ctx.drawImage(im, Math.round(W / 2 + (i - 2) * 70 - im.width / 2), Math.max(200, y + 20) + 48 - im.height); });
+  drawText(ctx, isTouchUI() ? 'TOQUE PARA VOLTAR' : 'ENTER PARA VOLTAR', W - 20, H - 18, 1, PAL.mist, 'right', null);
 }
 
-// ---------------------------------------------------------- mouse
+// ---------------------------------------------------------- mouse e toque (pointer events cobrem os dois)
 function toInternal(e) {
   const r = canvas.getBoundingClientRect();
   return { x: (e.clientX - r.left) / r.width * W, y: (e.clientY - r.top) / r.height * H };
 }
-canvas.addEventListener('mousemove', e => {
+canvas.addEventListener('pointermove', e => {
   const m = toInternal(e); App.mouse.x = m.x; App.mouse.y = m.y;
   App.buttons.forEach((b, i) => { if (m.x > b.x && m.x < b.x + b.w && m.y > b.y && m.y < b.y + b.h) { const idx = App.buttons.indexOf(b); if (App.menu !== idx) { App.menu = idx; } } });
 });
-canvas.addEventListener('mousedown', e => {
+canvas.addEventListener('pointerdown', e => {
   const m = toInternal(e);
+  App.mouse.x = m.x; App.mouse.y = m.y; // no toque não há movimento antes: o lado do toque ajusta o volume
   startAudio();
   for (const b of App.buttons) if (m.x > b.x && m.x < b.x + b.w && m.y > b.y && m.y < b.y + b.h) { Snd.sfx('ok'); b.act(); Input.swallow(); return; }
   if (App.state === 'intro' && App.stateT > 1.2) { Snd.stopVoice(); irisTo(() => beginPlay()); }

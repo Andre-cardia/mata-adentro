@@ -9,10 +9,34 @@ const VOICE_TEXT = {
   minuto: 'Um minuto! Corre, Zé!',
   vitoria: 'O ídolo é seu, Zé Trilha. A mata guardou o segredo por séculos, e hoje ele volta para casa.',
   fimdejogo: 'A mata venceu dessa vez. Mas ela sempre deixa você tentar de novo.',
+  // v2: campanha com cinco fases
+  transicao: 'O ídolo guardava um mapa. Quatro relíquias do povo esquecido ainda esperam na mata. A trilha continua, Zé!',
+  reliquia: 'Mais uma relíquia! A trilha continua.',
+  final: 'As cinco relíquias estão juntas outra vez. A mata guardou o segredo por séculos, e hoje ele volta para casa.',
+  f2_abertura: 'Na beira do mar, o mangue respira com a maré. Quando a água sobe, só as raízes salvam. Olho na maré, Zé!',
+  mare: 'A maré está subindo. Corre para as raízes!',
+  caranguejo: 'Caranguejo-uçá anda de lado. Pula na hora certa.',
+  lama: 'Lama funda. Ela prende o pé, mas não prende o Zé.',
+  f3_abertura: 'Agora a trilha sobe a serra. Lá no alto, a cachoeira esconde a próxima relíquia. Cuidado com as pedras!',
+  pedra: 'Pedra rolando! Pula ou sai da frente.',
+  correnteza: 'Correnteza forte. Vai pelas pedras e não para.',
+  afunda: 'Essas pedras afundam. Não fica parado.',
+  cachoeira: 'A cachoeira empurra. Passa quando a água afrouxar.',
+  f4_abertura: 'Lá em cima, a mata vira teto. Na copa das árvores, um passo errado é uma queda longa.',
+  ponte: 'Ponte de cipó. Ela balança, mas aguenta.',
+  galho: 'Galho seco quebra. Não demora em cima.',
+  macaco: 'Macaco-prego não gosta de visita. Desvia dos frutos!',
+  tirolesa: 'Agarra a tirolesa e segura firme.',
+  f5_abertura: 'A última relíquia está no fundo da caverna do ouro, onde o povo esquecido escondeu seu tesouro. Terra adentro, Zé!',
+  estalactite: 'Pedra solta no teto. Passa rápido.',
+  morcego: 'Morcegos! Eles voam em onda.',
+  fragil: 'O chão aqui é frágil. Não para.',
+  vagonete: 'Sobe no vagonete e pula antes do fim do trilho.',
   creditos: 'Mata Adentro foi criado com inteligência artificial. Código, arte e música pelo Claude. Voz gerada no VoiceStudio. Um experimento Neural Hub.',
 };
 // laços: arquivo = [1 s antes] + laço L + [1 s depois] (ver audio/process.sh)
-const LOOPS = { mus_tema: 40, mus_mata: 60, mus_sub: 30, amb_mata: 30, amb_sub: 20 };
+const LOOPS = { mus_tema: 40, mus_mata: 60, mus_sub: 30, amb_mata: 30, amb_sub: 20,
+  mus_mangue: 48, mus_serra: 40, mus_copa: 48, mus_caverna: 40, amb_mangue: 30, amb_serra: 30, amb_copa: 30, amb_caverna: 20 };
 
 const Snd = (() => {
   let ac = null, master, bus = {}, buffers = {}, ready = false, loading = null;
@@ -167,6 +191,10 @@ const Snd = (() => {
     menu: () => tone('square', 660, 880, 0.05, 0.06),
     ok: () => { tone('square', 660, 660, 0.06, 0.07); tone('square', 990, 990, 0.12, 0.07, 0.06); },
     escada: () => noise(0.05, { type: 'bandpass', f0: 1200, f1: 900, q: 3, peak: 0.1 }),
+    quebra: () => { noise(0.18, { type: 'bandpass', f0: 1800, f1: 400, q: 2, peak: 0.3 }); noise(0.3, { f0: 500, f1: 90, peak: 0.2, t0: 0.05 }); },
+    racha: () => { for (let i = 0; i < 4; i++) noise(0.04, { type: 'highpass', f0: 2500 + i * 300, f1: 1500, peak: 0.12, t0: i * 0.07 }); },
+    pedra: () => { noise(0.35, { f0: 300, f1: 50, peak: 0.45 }); tone('sine', 90, 40, 0.3, 0.2); },
+    arremesso: () => noise(0.18, { type: 'bandpass', f0: 600, f1: 2200, q: 2, peak: 0.1, attack: 0.05 }),
     iris: () => noise(0.4, { type: 'bandpass', f0: 300, f1: 1200, q: 2, peak: 0.06, attack: 0.2 }),
   };
   const SAMPLE_SFX = { mordida: 'sfx_mordida', afundar: 'sfx_afundar', fogueira: 'sfx_fogueira', idolo: 'sfx_idolo' };
@@ -177,6 +205,7 @@ const Snd = (() => {
   }
 
   return {
+    has: name => !!buffers[name],
     init, unlock() { init(); if (ac && ac.state !== 'running') return ac.resume().catch(() => { }); return Promise.resolve(); }, sfx, voice, stopVoice, setMusic, setAmbient, stopAll, setVol, toggleMute, currentSubtitle,
     vol, get ready() { return ready; }, get started() { return !!ac && ac.state === 'running'; }, get loading() { return loading || Promise.resolve(); }, get speaking() { return !!voiceSrc; }, get buffers() { return Object.keys(buffers); }, get state() { return ac ? ac.state : 'none'; },
   };

@@ -476,6 +476,7 @@ function buildAllArt() {
   buildBackgrounds();
   buildGround();
   buildSprites();
+  buildFaseArt();
   // quadros do Zé: pré-desenhados uma vez
   const poses = zePoses();
   Art.ze = {};

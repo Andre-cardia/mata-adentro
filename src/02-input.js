@@ -1,4 +1,4 @@
-// ============================================================ entrada: teclado + Gamepad API → ações
+// ============================================================ entrada: teclado + Gamepad API + toque (08-mobile.js) → ações
 const Input = (() => {
   const ACTIONS = ['left', 'right', 'up', 'down', 'jump', 'pause', 'mute', 'confirm', 'back'];
   const keys = new Set(), tapped = new Set(); // tapped: teclas apertadas desde a última leitura (toques rápidos)
@@ -8,9 +8,9 @@ const Input = (() => {
   const listeners = [];
 
   const KEYMAP = {
-    left: ['ArrowLeft', 'KeyA'], right: ['ArrowRight', 'KeyD'],
-    up: ['ArrowUp', 'KeyW'], down: ['ArrowDown', 'KeyS'],
-    jump: ['Space', 'KeyW', 'ArrowUp'], pause: ['Escape', 'KeyP'], mute: ['KeyM'],
+    left: ['ArrowLeft', 'KeyA', 'TouchLeft'], right: ['ArrowRight', 'KeyD', 'TouchRight'],
+    up: ['ArrowUp', 'KeyW', 'TouchUp'], down: ['ArrowDown', 'KeyS', 'TouchDown'],
+    jump: ['Space', 'KeyW', 'ArrowUp', 'TouchJump'], pause: ['Escape', 'KeyP', 'TouchPause'], mute: ['KeyM'],
     confirm: ['Enter', 'Space', 'NumpadEnter'], back: ['Escape', 'Backspace'],
   };
   const GAME_KEYS = new Set(Object.values(KEYMAP).flat());
@@ -56,5 +56,8 @@ const Input = (() => {
   const held = a => state[a];
   // libera tudo (evita que o clique de um menu vire pulo)
   function swallow() { for (const a of ACTIONS) prev[a] = state[a] = true; }
-  return { poll, pressed, held, swallow, on: f => listeners.push(f), get device() { return lastDevice; }, get hasPad() { return padIndex >= 0; } };
+  // botões de toque: códigos virtuais 'Touch*' que entram no mesmo conjunto das teclas
+  function press(code) { if (!keys.has(code)) { keys.add(code); tapped.add(code); } lastDevice = 'toque'; }
+  function release(code) { keys.delete(code); }
+  return { poll, pressed, held, swallow, press, release, on: f => listeners.push(f), get device() { return lastDevice; }, get hasPad() { return padIndex >= 0; } };
 })();

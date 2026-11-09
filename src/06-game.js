@@ -9,15 +9,20 @@ const TIME_LIMIT = 300;
 class Game {
   constructor(seed, opts = {}) {
     this.seed = seed;
-    this.world = generateWorld(seed);
+    this.phase = opts.phase || 1;
+    this.fase = FASES[this.phase];
+    this.world = generateCampaign(seed, this.phase);
+    themeArt(this.world.surface.theme); // monta o cenário da fase antes do primeiro quadro
     this.levelId = 'surface';
     this.t = 0;                   // relógio do jogo (ciclos dos perigos)
     this.time = TIME_LIMIT;
-    this.score = SCORE.start;
-    this.lives = 3;
+    this.score = opts.score !== undefined ? opts.score : SCORE.start;
+    this.lives = opts.lives || 3;
+    this.startScore = this.score;
     this.collected = { coin: 0, jewel: 0 };
     this.voiced = opts.voiced || {};
-    this.checkpoint = { level: 'surface', x: 70 };
+    const st = this.world.surface.start || { x: 70, y: GROUND };
+    this.checkpoint = { level: 'surface', x: st.x, y: st.y };
     this.particles = []; this.popups = [];
     this.shake = 0; this.flash = 0;
     this.cam = 0;
@@ -26,12 +31,12 @@ class Game {
     this.hurry = false;
     this.god = false;
     this.events = [];             // para a interface (ex.: troca de camada)
-    this.p = this.newPlayer(70, GROUND);
+    this.p = this.newPlayer(st.x, st.y);
     this.lastTick = -1;
     this.fireflies = Array.from({ length: 40 }, (_, i) => ({ x: Math.random() * 1500, y: 120 + Math.random() * 300, ph: Math.random() * 6, sp: 0.4 + Math.random() }));
   }
   get L() { return this.levelId === 'surface' ? this.world.surface : this.world.under[this.levelId]; }
-  get area() { return this.levelId === 'surface' ? clamp(Math.floor(this.p.x / AREA_W) + 1, 1, 10) : null; }
+  get area() { return this.levelId === 'surface' ? clamp(Math.floor(this.p.x / AREA_W) + 1, 1, this.L.areas) : null; }
 
   newPlayer(x, y) {
     return { x, y, vx: 0, vy: 0, face: 1, onGround: true, coyote: 0, jumpBuf: 0, state: 'normal', vine: null, vineD: 0, vineT: 0,
@@ -70,12 +75,14 @@ class Game {
     const ix = (Input.held('right') ? 1 : 0) - (Input.held('left') ? 1 : 0);
     if (Input.pressed('jump')) p.jumpBuf = PHYS.BUFFER; else p.jumpBuf = Math.max(0, p.jumpBuf - dt);
 
+    this.updateWorld(dt);
     if (p.state === 'dead') this.updateDead(dt);
+    else if (p.state === 'zip') this.updateZip(dt);
     else if (p.state === 'ladder') this.updateLadder(dt);
     else if (p.state === 'vine') this.updateVine(dt, ix);
     else this.updateNormal(dt, ix);
 
-    if (p.state !== 'dead') this.interact(dt);
+    if (this.p.state !== 'dead' && !this.interactNew(dt)) this.interact(dt);
     this.updateCamera(dt);
     this.updateFx(dt);
   }
@@ -100,15 +107,16 @@ class Game {
       }
     }
     // movimento horizontal: aceleração rápida, frenagem curta
+    const mods = this.moveMods();
     const acc = p.onGround ? (ix ? PHYS.ACC : PHYS.DEC) : PHYS.AIR_ACC;
-    const target = ix * PHYS.RUN;
+    const target = ix * PHYS.RUN * (mods ? mods.run : 1);
     if (p.vx < target) p.vx = Math.min(target, p.vx + acc * dt); else if (p.vx > target) p.vx = Math.max(target, p.vx - acc * dt);
     if (tripping) p.vx *= 0.9;
     if (ix) p.face = ix;
     // tolerância de borda e pulo antecipado
     p.coyote = p.onGround ? PHYS.COYOTE : Math.max(0, p.coyote - dt);
     if (p.jumpBuf > 0 && p.coyote > 0 && !tripping) {
-      p.vy = -PHYS.JUMP_V; p.onGround = false; p.coyote = 0; p.jumpBuf = 0; p.jumpHeld = true;
+      p.vy = -PHYS.JUMP_V * (mods ? mods.jump : 1); p.onGround = false; p.coyote = 0; p.jumpBuf = 0; p.jumpHeld = true; p.plat = null;
       Snd.sfx('pulo');
     }
     // pulo variável: soltar cedo corta o pulo
@@ -123,12 +131,14 @@ class Game {
 
     // abaixo da superfície dentro de um vão: paredes da lagoa
     const floor = L.floor;
-    if (prevY > floor + 2) {
+    if (prevY > floor + 2 && !L.noGround) {
       const g = this.inGap(L, p.x) || this.inGap(L, p.x - p.vx * dt);
       if (g) p.x = clamp(p.x, g.x1 + 6, g.x2 - 6);
     }
-    const sup = this.supported(L, p.x - 8) || this.supported(L, p.x + 8);
-    if (p.vy >= 0 && prevY <= floor + 1 && p.y >= floor && sup) {
+    const onPlat = this.platformCollide(prevY, dt);
+    const sup = !L.noGround && (this.supported(L, p.x - 8) || this.supported(L, p.x + 8));
+    if (onPlat) { /* em pé numa plataforma */ }
+    else if (p.vy >= 0 && prevY <= floor + 1 && p.y >= floor && sup) {
       if (!p.onGround && p.vy > 300) { Snd.sfx('pouso'); this.dust(p.x, floor, 6); }
       p.y = floor; p.vy = 0; p.onGround = true;
     } else if (p.onGround && !sup) {
@@ -136,14 +146,15 @@ class Game {
     } else if (p.y < floor - 0.5 || !sup) {
       p.onGround = false;
     }
-    if (p.y > floor + 16 && !sup) {
+    if (!onPlat && p.y > floor + 16 && !sup) {
       const g = this.inGap(L, p.x);
-      if (g) { this.splash(p.x, floor + 12); this.kill('agua'); }
+      if (g && g.kind !== 'pit' && !L.noGround) { this.splash(p.x, floor + 12); this.kill('agua'); }
     }
+    if (p.y > H + 40) this.kill('queda'); // abismo da caverna ou queda da copa
     // passos
     if (p.onGround && Math.abs(p.vx) > 60) { p.stepT -= dt * Math.abs(p.vx) / PHYS.RUN; if (p.stepT <= 0) { p.stepT = 0.17; Snd.sfx('passo'); } }
     // cipós: agarra automaticamente ao encostar durante um pulo
-    if (!p.onGround && p.grabCD <= 0 && !tripping) this.tryGrab();
+    if (!p.onGround && p.grabCD <= 0 && !tripping && !this.tryZip()) this.tryGrab();
   }
 
   tryGrab() {
@@ -255,8 +266,8 @@ class Game {
     for (const f of L.fires) {
       if (!f.lit && p.x > f.x - 12) {
         f.lit = true;
-        this.checkpoint = { level: this.levelId, x: f.x + 34 };
-        Snd.sfx('fogueira'); this.embers(f.x, floor - 20, 20);
+        this.checkpoint = { level: this.levelId, x: f.x + 34, y: f.y !== undefined ? f.y : floor };
+        Snd.sfx('fogueira'); this.embers(f.x, (f.y || floor) - 20, 20);
         this.say('fogueira');
       }
     }
@@ -279,7 +290,8 @@ class Game {
     if (p.state === 'dead') return;
     if (this.god && kind !== 'tempo') return;
     p.state = 'dead'; p.deadKind = kind; p.deadT = 0; p.vine = null; p.ladder = null;
-    p.vx = 0; p.vy = kind === 'mordida' || kind === 'escorpiao' ? -520 : 0; p.sinkY = 0;
+    const pop = ['mordida', 'escorpiao', 'caranguejo', 'pedra', 'morcego', 'estalactite'].includes(kind);
+    p.vx = 0; p.vy = pop ? -520 : kind === 'queda' ? p.vy : 0; p.sinkY = 0; p.plat = null; p.zip = null;
     p.hatFly = { x: p.x, y: p.y - 64, vx: -p.face * 80, vy: -300, rot: 0 };
     this.shake = 8; this.flash = kind === 'tempo' ? 0 : 0.25;
     if (kind === 'mordida') Snd.sfx('mordida');
@@ -294,9 +306,10 @@ class Game {
     p.deadT += dt;
     if (p.deadKind === 'areia') { p.sinkY = Math.min(70, p.sinkY + dt * 45); if (Math.random() < 0.3) this.sandPuff(p.x, floor); }
     else if (p.deadKind === 'agua') { p.y = Math.min(p.y + dt * 80, floor + 70); }
-    else if (p.deadKind === 'mordida' || p.deadKind === 'escorpiao') { p.vy += PHYS.GRAV * dt; p.y += p.vy * dt; if (p.y > floor) { p.y = floor; p.vy = 0; } }
+    else if (p.deadKind === 'queda') { p.vy = Math.min(PHYS.MAXFALL, p.vy + PHYS.GRAV * dt); p.y += p.vy * dt; }
+    else if (p.deadKind !== 'tempo') { p.vy += PHYS.GRAV * dt; p.y += p.vy * dt; const fl = this.L.noGround ? H + 200 : floor; if (p.y > fl && !this.inGap(this.L, p.x)) { p.y = fl; p.vy = 0; } }
     if (p.hatFly) { const h = p.hatFly; h.vy += 900 * dt; h.x += h.vx * dt; h.y += h.vy * dt; h.rot += dt * 6; }
-    const wait = p.deadKind === 'tempo' ? 0.8 : 1.6;
+    const wait = p.deadKind === 'tempo' ? 0.8 : p.deadKind === 'queda' ? 1.0 : 1.6;
     if (p.deadT > wait && !p.respawnRequested) {
       p.respawnRequested = true;
       if (p.deadKind !== 'tempo') this.lives--;
@@ -308,7 +321,7 @@ class Game {
   respawn() {
     const cp = this.checkpoint;
     this.levelId = cp.level;
-    this.p = this.newPlayer(cp.x, this.L.floor);
+    this.p = this.newPlayer(cp.x, cp.y !== undefined ? cp.y : this.L.floor);
     this.p.inv = 1.5;
     this.cam = clamp(this.p.x - W * 0.42, 0, this.L.len - W);
     this.particles = [];
@@ -320,8 +333,10 @@ class Game {
     L.idol.taken = true;
     this.over = 'win';
     this.p.state = 'cheer'; this.p.vx = 0; this.p.anim = 0;
-    const bonusTime = Math.floor(this.time) * SCORE.perSecond, bonusLives = this.lives * SCORE.perLife;
-    this.result = { base: this.score + SCORE.idol, time: Math.floor(this.time), bonusTime, lives: this.lives, bonusLives, idol: SCORE.idol };
+    this.final = this.phase >= LAST_FASE;
+    // bônus de tempo a cada fase; bônus de vidas só no fim da campanha
+    const bonusTime = Math.floor(this.time) * SCORE.perSecond, bonusLives = this.final ? this.lives * SCORE.perLife : 0;
+    this.result = { base: this.score + SCORE.idol, time: Math.floor(this.time), bonusTime, lives: this.lives, bonusLives, idol: SCORE.idol, phase: this.phase };
     this.score += SCORE.idol + bonusTime + bonusLives;
     this.result.total = this.score;
     this.sparkle(L.idol.x, L.idol.y - 10, PAL.gold2, 40);
@@ -362,7 +377,7 @@ class Game {
     const L = this.L;
     ctx.save();
     if (this.shake > 0) ctx.translate(Math.round((Math.random() - 0.5) * this.shake), Math.round((Math.random() - 0.5) * this.shake));
-    if (L.kind === 'surface') drawSurfaceBack(ctx, this.cam, now); else drawCaveBack(ctx, this.cam, now);
+    if (L.kind === 'surface') drawSurfaceBack(ctx, this.cam, now, L.theme); else drawCaveBack(ctx, this.cam, now);
     ctx.save();
     ctx.translate(-Math.round(this.cam), 0);
     if (L.kind === 'surface') this.drawSurface(ctx, L, now); else this.drawUnder(ctx, L, now);
@@ -378,7 +393,7 @@ class Game {
     ctx.globalAlpha = 1;
     for (const q of this.popups) drawText(ctx, q.text, q.x, q.y, 2, q.c, 'center');
     ctx.restore();
-    if (L.kind === 'surface') drawForeground(ctx, this.cam, now);
+    if (L.kind === 'surface') { drawForeground(ctx, this.cam, now, L.theme); if (L.theme === 'caverna') drawCaveDark(ctx, this, now, 0.42); }
     else drawCaveDark(ctx, this, now);
     ctx.restore();
     if (this.flash > 0) { ctx.fillStyle = `rgba(200,40,30,${this.flash})`; ctx.fillRect(0, 0, W, H); }
@@ -389,13 +404,15 @@ class Game {
   drawSurface(ctx, L, now) {
     const t = this.t, cam = this.cam;
     // chão: azulejos repetidos
+    const TH = themeArt(L.theme);
     const gTop = GROUND - Art.groundTop;
     const startTile = Math.floor(cam / AREA_W);
-    for (let i = startTile; i <= startTile + 1; i++) ctx.drawImage(Art.ground, i * AREA_W, gTop);
-    // ruínas da clareira (área 10)
-    if (L.idol && this.visible(L.idol.x, 700)) drawRuins(ctx, L.idol, now, L.idol.taken);
-    // lagoas
-    for (const g of L.gaps) if (this.visible(g.x1, 50) || this.visible(g.x2, 50) || (g.x1 < cam && g.x2 > cam + W)) drawPond(ctx, g, now);
+    if (!L.noGround) for (let i = startTile; i <= startTile + 1; i++) ctx.drawImage(TH.ground, i * AREA_W, gTop);
+    // ruínas da clareira (área 10 da fase 1)
+    if (L.idol && L.idol.relic === 'idolo' && this.visible(L.idol.x, 700)) drawRuins(ctx, L.idol, now, L.idol.taken);
+    // lagoas, rios e abismos
+    for (const g of L.gaps) if (this.visible(g.x1, 50) || this.visible(g.x2, 50) || (g.x1 < cam && g.x2 > cam + W)) { if (g.kind === 'pit') drawPit(ctx, g, L.theme); else drawPond(ctx, g, now, L.theme); }
+    this.drawNewBack(ctx, L, now);
     // buracos das escadas
     for (const ld of L.ladders) if (this.visible(ld.x)) drawLadderHole(ctx, ld);
     // areia movediça
@@ -410,7 +427,7 @@ class Game {
     // placas
     for (const s of L.signs) if (this.visible(s.x, 200)) { const c = signCanvas(s.lines); ctx.drawImage(c, Math.round(s.x - c.width / 2), GROUND - c.height + 4); }
     // fogueiras
-    for (const f of L.fires) if (this.visible(f.x)) drawFire(ctx, f, L.floor, now);
+    for (const f of L.fires) if (this.visible(f.x)) drawFire(ctx, f, f.y !== undefined ? f.y : L.floor, now);
     // troncos
     for (const lg of L.logs) for (const lx of logPositions(lg, t)) if (this.visible(lx)) {
       const fr = ((Math.floor(-lx / 12) % 8) + 8) % 8;
@@ -422,12 +439,15 @@ class Game {
     // tesouros
     this.drawTreasures(ctx, L, now);
     // cipós
-    for (const v of L.vines) if (this.visible(v.px, 320)) drawVine(ctx, v, vineState(v, t).th);
-    // ídolo
+    for (const v of L.vines) if (this.visible(v.px, 320)) drawVine(ctx, v, vineState(v, t).th, L.theme);
+    this.drawNewFront(ctx, L, now);
+    // relíquia da fase
     if (L.idol && !L.idol.taken && this.visible(L.idol.x)) {
       const bob = Math.sin(now / 400) * 2;
+      if (L.idol.relic !== 'idolo') drawPedestal(ctx, L.idol);
       drawGlow(ctx, L.idol.x, L.idol.y - 10, 60, 'rgba(255,220,120,0.35)');
-      ctx.drawImage(Art.idol, Math.round(L.idol.x - 24), Math.round(L.idol.y - 56 + bob));
+      const rim = Art.relics[L.idol.relic] || Art.idol;
+      ctx.drawImage(rim, Math.round(L.idol.x - rim.width / 2), Math.round(L.idol.y - rim.height + bob));
       if (Math.random() < 0.15) this.addP({ x: L.idol.x + (Math.random() - 0.5) * 40, y: L.idol.y - 30 + (Math.random() - 0.5) * 40, vx: 0, vy: -20, life: 0.6, max: 0.6, c: PAL.gold2, s: 2, g: 0, star: true });
     }
     if (this.debugBoxes) this.drawDebug(ctx, L);
@@ -490,7 +510,7 @@ class Game {
     let frames = Art.ze.idle, fi = Math.floor(p.anim * 3) % 4;
     let dx = 0, dy = 0, clipBottom = null;
     switch (p.state) {
-      case 'vine': frames = Art.ze.swing; fi = 0; break;
+      case 'vine': case 'zip': frames = Art.ze.swing; fi = 0; break;
       case 'ladder': frames = Art.ze.climb; fi = ((Math.floor(p.y / 14) % 2) + 2) % 2; break; // y fica negativo ao chegar no subterrâneo
       case 'trip': frames = Art.ze.trip; fi = 0; break;
       case 'cheer': frames = Art.ze.cheer; fi = Math.floor(p.anim * 4) % 2; break;
@@ -512,7 +532,8 @@ class Game {
     ctx.restore();
     if (p.state === 'cheer') { // ergue o ídolo
       const L = this.L;
-      ctx.drawImage(Art.idol, Math.round(p.x - 24), Math.round(p.y - 64 - 52 - (fi ? 2 : 0)));
+      const rim = (L.idol && Art.relics[L.idol.relic]) || Art.idol;
+      ctx.drawImage(rim, Math.round(p.x - rim.width / 2), Math.round(p.y - 64 - rim.height + 4 - (fi ? 2 : 0)));
     }
     if (p.state === 'dead' && p.hatFly && p.deadKind !== 'areia' && p.deadKind !== 'agua') {
       const h = p.hatFly;
@@ -529,25 +550,29 @@ class Game {
 
 // ---------------------------------------------------------- desenho de cenário compartilhado
 const beams = [[180, 0.9], [520, 0.6], [880, 1.0], [1300, 0.7], [1650, 0.85]];
-function drawSurfaceBack(ctx, cam, now) {
-  ctx.drawImage(Art.sky, 0, 0);
+function drawSurfaceBack(ctx, cam, now, theme = 'mata') {
+  const T = themeArt(theme);
+  ctx.drawImage(T.sky, 0, 0);
   const strip = (img, f, y = 0) => {
     const w = img.width, off = -((cam * f) % w + w) % w;
     ctx.drawImage(img, Math.round(off), y); ctx.drawImage(img, Math.round(off + w), y);
   };
-  strip(Art.mountains, 0.1);
-  strip(Art.farForest, 0.25);
+  if (T.mountains) strip(T.mountains, 0.1);
+  if (T.farForest) strip(T.farForest, 0.25);
   // neblina que se move
   const fogX = ((now / 1000) * 10 + cam * 0.35) % 1920;
-  ctx.globalAlpha = 0.25;
+  ctx.globalAlpha = T.fogAlpha !== undefined ? T.fogAlpha : 0.25;
+  const fc = T.fog || '230,240,215';
   for (let k = 0; k < 4; k++) {
     const x = ((k * 520 - fogX) % 1920 + 1920) % 1920 - 300;
     const gr = ctx.createRadialGradient(x + 200, 360, 10, x + 200, 360, 260);
-    gr.addColorStop(0, 'rgba(230,240,215,0.9)'); gr.addColorStop(1, 'rgba(230,240,215,0)');
+    gr.addColorStop(0, `rgba(${fc},0.9)`); gr.addColorStop(1, `rgba(${fc},0)`);
     ctx.fillStyle = gr; ctx.fillRect(x - 100, 200, 600, 300);
   }
   ctx.globalAlpha = 1;
-  strip(Art.midForest, 0.5);
+  if (T.midForest) strip(T.midForest, 0.5);
+  if (T.extraBack) T.extraBack(ctx, cam, now);
+  if (T.beams === false) return;
   // feixes de luz entre as copas
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
@@ -562,8 +587,9 @@ function drawSurfaceBack(ctx, cam, now) {
   }
   ctx.restore();
 }
-function drawForeground(ctx, cam, now) {
-  const img = Art.foreground, w = img.width, off = -((cam * 1.3) % w + w) % w;
+function drawForeground(ctx, cam, now, theme = 'mata') {
+  const img = themeArt(theme).foreground; if (!img) return;
+  const w = img.width, off = -((cam * 1.3) % w + w) % w;
   ctx.drawImage(img, Math.round(off), 0); ctx.drawImage(img, Math.round(off + w), 0);
 }
 function drawCaveBack(ctx, cam, now) {
@@ -572,17 +598,21 @@ function drawCaveBack(ctx, cam, now) {
   strip(Art.caveCeil, 1.0);
 }
 let caveVignette = null;
-function drawCaveDark(ctx, game, now) {
+function drawCaveDark(ctx, game, now, dark = 0.72) {
   // escuridão com luz ao redor do Zé, das fogueiras e das bocas das escadas
   if (!caveVignette) { const [c] = makeCanvas(W, H); caveVignette = c; }
   const g = caveVignette.getContext('2d');
   g.clearRect(0, 0, W, H);
-  g.fillStyle = 'rgba(4,8,6,0.72)'; g.fillRect(0, 0, W, H);
+  g.fillStyle = `rgba(4,8,6,${dark})`; g.fillRect(0, 0, W, H);
   g.globalCompositeOperation = 'destination-out';
   const hole = (x, y, r, a) => { const gr = g.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, `rgba(0,0,0,${a})`); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2); };
   const p = game.p, L = game.L, cam = game.cam;
   hole(p.x - cam, p.y - 40, 230, 0.9);
-  for (const f of L.fires) hole(f.x - cam, FLOOR_U - 30, f.lit ? 260 + Math.sin(now / 90) * 8 : 90, f.lit ? 0.95 : 0.4);
+  for (const f of L.fires) hole(f.x - cam, (f.y !== undefined ? f.y : L.floor) - 30, f.lit ? 260 + Math.sin(now / 90) * 8 : 90, f.lit ? 0.95 : 0.4);
+  for (const c of L.carts || []) hole(cartPos(c, game.t) - cam, c.y - 20, 120, 0.7);
+  for (const b of L.bats || []) { const q = batPos(b, game.t); hole(q.x - cam, q.y, 70, 0.75); }
+  for (const s of L.stalactites || []) if (s.state !== 'gone') hole(s.x - cam, s.y, s.state === 'idle' ? 46 : 70, 0.6);
+  if (L.idol && !L.idol.taken) hole(L.idol.x - cam, L.idol.y - 30, 160, 0.9);
   for (const ld of L.ladders) hole(ld.x - cam, 40, 200, 0.85);
   for (const tr of L.treasures) if (!tr.taken && tr.type === 'jewel') hole(tr.x - cam, tr.y, 70, 0.6);
   g.globalCompositeOperation = 'source-over';
@@ -593,8 +623,9 @@ function drawGlow(ctx, x, y, r, c) {
   gr.addColorStop(0, c); gr.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = gr; ctx.fillRect(x - r, y - r, r * 2, r * 2);
 }
-function drawPond(ctx, g, now) {
+function drawPond(ctx, g, now, theme) {
   const x1 = g.x1, x2 = g.x2, top = GROUND;
+  if (g.kind === 'river') { drawRiver(ctx, g, now); return; }
   ctx.fillStyle = '#2a1a0e'; ctx.fillRect(x1, top - 2, x2 - x1, H - top + 2);   // margem escura
   const gr = ctx.createLinearGradient(0, top + 12, 0, H);
   gr.addColorStop(0, PAL.water2); gr.addColorStop(0.3, PAL.water); gr.addColorStop(1, '#0d2224');
