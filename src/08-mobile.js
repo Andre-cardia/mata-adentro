@@ -10,7 +10,9 @@ const Mobile = (() => {
 
   const standalone = () => matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
-  const canFullscreen = !!(root.requestFullscreen || root.webkitRequestFullscreen) && (document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  const fakeIOS = params.has('ios'); // ?ios simula o Safari do iPhone (sem Fullscreen API) para testar a dica
+  const isIOS = fakeIOS || /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const canFullscreen = !fakeIOS && !!(root.requestFullscreen || root.webkitRequestFullscreen) && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
 
   // ---------------------------------------------------------- modo toque: liga em aparelhos de toque (ou no primeiro toque real)
   function enableTouch() {
@@ -93,11 +95,62 @@ const Mobile = (() => {
   }
   if (standalone()) lockLandscape();
 
+  // ---------------------------------------------------------- girou para paisagem: aviso de tela cheia (Android) ou dica da Tela de Início (iPhone)
+  // Girar o celular não é um gesto, então o navegador não deixa entrar em tela cheia sozinho: o aviso pede um toque.
+  // Esse toque cai no aviso, não no canvas nem nos botões, então não vira pulo nem escolha de menu.
+  const landscape = matchMedia('(orientation: landscape)');
+  const gate = $('fsgate'), hint = $('ioshint');
+  let gateOff = false; // "continuar sem tela cheia": não insiste até o próximo giro
+  function showGate() {
+    if (!body.classList.contains('touch') || !canFullscreen || standalone() || fsElement() || !landscape.matches || gateOff) return;
+    if (body.classList.contains('fs-gate')) return;
+    if (App.state === 'play' && App.game && !App.game.over) setState('pause'); // a partida não corre por baixo do aviso
+    releaseAll();
+    body.classList.add('fs-gate');
+  }
+  const hideGate = () => body.classList.remove('fs-gate');
+  gate.addEventListener('pointerdown', e => e.preventDefault());
+  gate.addEventListener('pointerup', () => { hideGate(); goFullscreen(true); });
+  $('fsgate-no').addEventListener('pointerup', e => { e.stopPropagation(); gateOff = true; hideGate(); });
+
+  const HINT_KEY = 'mataAdentro.dicaTelaInicio';
+  let hintShown = false, hintTimer = 0;
+  try { hintShown = sessionStorage.getItem(HINT_KEY) === '1'; } catch (e) { }
+  function showIOSHint() {
+    if (!isIOS || canFullscreen || standalone() || !landscape.matches || !body.classList.contains('touch')) return;
+    if (hintShown || store.get(HINT_KEY, false)) return; // uma vez por sessão; fechada no ✕, não volta mais
+    hintShown = true;
+    try { sessionStorage.setItem(HINT_KEY, '1'); } catch (e) { }
+    body.classList.add('ios-hint');
+    hintTimer = setTimeout(hideHint, 15000);
+  }
+  function hideHint() { clearTimeout(hintTimer); body.classList.remove('ios-hint'); }
+  hint.addEventListener('pointerdown', e => e.preventDefault());
+  $('ioshint-x').addEventListener('pointerup', () => { store.set(HINT_KEY, true); hideHint(); });
+
+  function onLandscape() { showGate(); showIOSHint(); }
+  // o giro chega por vários caminhos (media query, resize, orientationchange); age só quando a orientação muda de fato
+  let wasLandscape = landscape.matches;
+  function checkOrientation() {
+    const now = landscape.matches;
+    if (now === wasLandscape) return;
+    wasLandscape = now;
+    if (now) { gateOff = false; setTimeout(onLandscape, 200); } else { hideGate(); hideHint(); }
+  }
+  landscape.addEventListener('change', checkOrientation);
+  addEventListener('resize', checkOrientation);
+  addEventListener('orientationchange', () => setTimeout(checkOrientation, 250));
+  const onFsChange = () => { if (fsElement()) hideGate(); else setTimeout(showGate, 300); }; // saiu da tela cheia: oferece voltar
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  if (landscape.matches) onLandscape(); // abriu já deitado
+
   // ---------------------------------------------------------- primeiro toque: tela cheia e áudio (o iOS só libera o som dentro de um gesto)
   if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (e) { } } // toca mesmo com a chave de silencioso (Safari 17+)
   function gesture(e) {
     if (e.type === 'pointerup' && e.pointerType === 'mouse') return;
-    goFullscreen();
+    const own = e.target && e.target.closest && e.target.closest('#fsgate, #fs, #ioshint'); // esses tratam a tela cheia sozinhos
+    if (!own && !body.classList.contains('fs-gate')) goFullscreen();
     if (!Snd.started) startAudio(); // também retoma o áudio "interrompido" do iOS ao voltar para o app
   }
   addEventListener('touchend', gesture, { capture: true });

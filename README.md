@@ -22,15 +22,15 @@ Ou localmente: abra `dist/mata-adentro.html` em qualquer navegador atual. O arqu
 
 O jogo é um web app instalável (PWA) e se joga com o celular deitado. Controles na tela: direcional à esquerda (andar, subir e descer escadas; dá para deslizar o polegar entre as setas), PULAR à direita e pausa no canto. Eles só aparecem em aparelhos de toque e somem nos menus, onde se toca direto nas opções. Em retrato aparece o aviso "gire o celular" e a partida pausa.
 
-- **Android (Chrome):** o primeiro toque põe o jogo em tela cheia e trava em paisagem. Depois, no menu do Chrome, use "Instalar app" ou "Adicionar à tela inicial" para abrir sempre em tela cheia.
-- **iPhone (Safari):** o Safari não tem tela cheia para páginas. Toque em Compartilhar e depois em "Adicionar à Tela de Início". Aberto pelo ícone, o jogo ocupa a tela inteira.
+- **Android (Chrome):** ao deitar o celular (ou ao sair da tela cheia) aparece "TOQUE PARA JOGAR EM TELA CHEIA". O navegador só deixa entrar em tela cheia com um toque, e esse toque não vira pulo nem escolha de menu. A tela trava em paisagem e, se houver partida, ela fica pausada até o jogador continuar. Para abrir sempre em tela cheia, use "Instalar app" ou "Adicionar à tela inicial" no menu do Chrome.
+- **iPhone (Safari):** o Safari não tem tela cheia para páginas. Ao deitar o celular, uma dica (uma vez por sessão; fechada no ✕, não volta mais) ensina a tocar em Compartilhar e depois em "Adicionar à Tela de Início". Aberto pelo ícone, o jogo ocupa a tela inteira.
 
 Depois da primeira visita o jogo abre sem internet: um service worker guarda a página e os ícones.
 
 Parâmetros de URL:
 - `?seed=12345` abre uma trilha específica (a mesma semente gera as 5 fases).
 - `?fase=3` faz o "Jogar" começar direto na fase 3.
-- `?toque` mostra os controles de toque também no computador (teste).
+- `?toque` mostra os controles de toque também no computador (teste); `?ios` simula o Safari do iPhone para ver a dica da Tela de Início.
 - `?debug` mostra o FPS e libera atalhos de teste: teclas 1–0 levam à área, G deixa o Zé imortal, H mostra as caixas de colisão e U leva ao subterrâneo (fase 1).
 
 ## Montar

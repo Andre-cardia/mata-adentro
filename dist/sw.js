@@ -1,7 +1,7 @@
 // Mata Adentro — service worker (gerado pelo build.py). Rede primeiro, cache como reserva: abre sem internet
 // depois da primeira visita e pega a versão nova assim que houver conexão.
 const PREFIX = 'mata-adentro:' + self.registration.scope + ':'; // um cache por escopo: dist/ e docs/ não se apagam
-const CACHE = PREFIX + '7fca8dc45a';
+const CACHE = PREFIX + 'd13110ef8a';
 const START = "./mata-adentro.html";
 const FILES = ["./mata-adentro.html", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-192.png", "icons/icon-maskable-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 self.addEventListener('install', e => {

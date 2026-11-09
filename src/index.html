@@ -52,6 +52,24 @@
   #rotate small { color: #a9b8a0; font-weight: 400; font-size: 14px; max-width: 280px; }
   @keyframes girar { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
   @media (orientation: portrait) { body.touch #rotate { display: flex; } }
+
+  /* ---- Android: girou para paisagem (ou saiu da tela cheia) -> um toque volta para a tela cheia ---- */
+  #fsgate { position: fixed; inset: 0; z-index: 8; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+            background: rgba(6, 10, 8, 0.82); color: #f2c14e; font: 700 26px/1.25 system-ui, sans-serif; text-align: center; padding: 24px;
+            touch-action: none; cursor: pointer; }
+  body.fs-gate #fsgate { display: flex; }
+  #fsgate .ic { font-size: 54px; line-height: 1; animation: pulsar 1.4s ease-in-out infinite; }
+  #fsgate button { margin-top: 10px; padding: 10px 16px; border: 0; background: none; color: #a9b8a0; font: 400 15px system-ui, sans-serif; text-decoration: underline; }
+  @keyframes pulsar { 50% { transform: scale(1.12); } }
+
+  /* ---- iPhone fora da Tela de Início: dica curta e fechável ---- */
+  #ioshint { position: fixed; z-index: 9; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%); display: none;
+             align-items: center; gap: 12px; width: max-content; max-width: min(700px, 92vw); padding: 8px 10px 8px 14px; border-radius: 14px;
+             background: rgba(13, 20, 16, 0.94); border: 2px solid rgba(242, 193, 78, 0.7); color: #f4ecd2; font: 400 14px/1.35 system-ui, sans-serif; }
+  body.ios-hint #ioshint { display: flex; }
+  #ioshint b { color: #f2c14e; }
+  #ioshint svg { flex: none; width: 26px; height: 26px; }
+  #ioshint button { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(242, 193, 78, 0.2); color: #f2c14e; font: 700 18px system-ui, sans-serif; }
 </style>
 </head>
 <body>
@@ -61,6 +79,16 @@
   <div class="tb" id="jump">PULAR</div>
   <div class="tb" id="pause">❚❚</div>
   <div class="tb" id="fs" title="Tela cheia">⛶</div>
+</div>
+<div id="fsgate" role="button" aria-label="Tocar para jogar em tela cheia">
+  <div class="ic">⛶</div>
+  <div>TOQUE PARA JOGAR<br>EM TELA CHEIA</div>
+  <button type="button" id="fsgate-no">continuar sem tela cheia</button>
+</div>
+<div id="ioshint" role="note">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#f2c14e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>
+  <div>Para jogar em <b>tela cheia</b>: toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>. Abra o jogo pelo ícone.</div>
+  <button type="button" id="ioshint-x" aria-label="Fechar dica">✕</button>
 </div>
 <div id="rotate">
   <svg viewBox="0 0 64 64" fill="none" stroke="#f2c14e" stroke-width="4" stroke-linejoin="round"><rect x="20" y="6" width="24" height="52" rx="5"/><circle cx="32" cy="50" r="2.5" fill="#f2c14e"/></svg>

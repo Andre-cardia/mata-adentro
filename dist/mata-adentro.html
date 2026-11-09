@@ -52,6 +52,24 @@
   #rotate small { color: #a9b8a0; font-weight: 400; font-size: 14px; max-width: 280px; }
   @keyframes girar { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
   @media (orientation: portrait) { body.touch #rotate { display: flex; } }
+
+  /* ---- Android: girou para paisagem (ou saiu da tela cheia) -> um toque volta para a tela cheia ---- */
+  #fsgate { position: fixed; inset: 0; z-index: 8; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+            background: rgba(6, 10, 8, 0.82); color: #f2c14e; font: 700 26px/1.25 system-ui, sans-serif; text-align: center; padding: 24px;
+            touch-action: none; cursor: pointer; }
+  body.fs-gate #fsgate { display: flex; }
+  #fsgate .ic { font-size: 54px; line-height: 1; animation: pulsar 1.4s ease-in-out infinite; }
+  #fsgate button { margin-top: 10px; padding: 10px 16px; border: 0; background: none; color: #a9b8a0; font: 400 15px system-ui, sans-serif; text-decoration: underline; }
+  @keyframes pulsar { 50% { transform: scale(1.12); } }
+
+  /* ---- iPhone fora da Tela de Início: dica curta e fechável ---- */
+  #ioshint { position: fixed; z-index: 9; left: 50%; top: max(12px, env(safe-area-inset-top)); transform: translateX(-50%); display: none;
+             align-items: center; gap: 12px; width: max-content; max-width: min(700px, 92vw); padding: 8px 10px 8px 14px; border-radius: 14px;
+             background: rgba(13, 20, 16, 0.94); border: 2px solid rgba(242, 193, 78, 0.7); color: #f4ecd2; font: 400 14px/1.35 system-ui, sans-serif; }
+  body.ios-hint #ioshint { display: flex; }
+  #ioshint b { color: #f2c14e; }
+  #ioshint svg { flex: none; width: 26px; height: 26px; }
+  #ioshint button { flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; background: rgba(242, 193, 78, 0.2); color: #f2c14e; font: 700 18px system-ui, sans-serif; }
 </style>
 </head>
 <body>
@@ -61,6 +79,16 @@
   <div class="tb" id="jump">PULAR</div>
   <div class="tb" id="pause">❚❚</div>
   <div class="tb" id="fs" title="Tela cheia">⛶</div>
+</div>
+<div id="fsgate" role="button" aria-label="Tocar para jogar em tela cheia">
+  <div class="ic">⛶</div>
+  <div>TOQUE PARA JOGAR<br>EM TELA CHEIA</div>
+  <button type="button" id="fsgate-no">continuar sem tela cheia</button>
+</div>
+<div id="ioshint" role="note">
+  <svg viewBox="0 0 24 24" fill="none" stroke="#f2c14e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 7.5 12 3l4.5 4.5"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>
+  <div>Para jogar em <b>tela cheia</b>: toque em <b>Compartilhar</b> e depois em <b>Adicionar à Tela de Início</b>. Abra o jogo pelo ícone.</div>
+  <button type="button" id="ioshint-x" aria-label="Fechar dica">✕</button>
 </div>
 <div id="rotate">
   <svg viewBox="0 0 64 64" fill="none" stroke="#f2c14e" stroke-width="4" stroke-linejoin="round"><rect x="20" y="6" width="24" height="52" rx="5"/><circle cx="32" cy="50" r="2.5" fill="#f2c14e"/></svg>
@@ -3513,7 +3541,9 @@ const Mobile = (() => {
 
   const standalone = () => matchMedia('(display-mode: fullscreen)').matches || matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
-  const canFullscreen = !!(root.requestFullscreen || root.webkitRequestFullscreen) && (document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  const fakeIOS = params.has('ios'); // ?ios simula o Safari do iPhone (sem Fullscreen API) para testar a dica
+  const isIOS = fakeIOS || /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const canFullscreen = !fakeIOS && !!(root.requestFullscreen || root.webkitRequestFullscreen) && !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
 
   // ---------------------------------------------------------- modo toque: liga em aparelhos de toque (ou no primeiro toque real)
   function enableTouch() {
@@ -3596,11 +3626,62 @@ const Mobile = (() => {
   }
   if (standalone()) lockLandscape();
 
+  // ---------------------------------------------------------- girou para paisagem: aviso de tela cheia (Android) ou dica da Tela de Início (iPhone)
+  // Girar o celular não é um gesto, então o navegador não deixa entrar em tela cheia sozinho: o aviso pede um toque.
+  // Esse toque cai no aviso, não no canvas nem nos botões, então não vira pulo nem escolha de menu.
+  const landscape = matchMedia('(orientation: landscape)');
+  const gate = $('fsgate'), hint = $('ioshint');
+  let gateOff = false; // "continuar sem tela cheia": não insiste até o próximo giro
+  function showGate() {
+    if (!body.classList.contains('touch') || !canFullscreen || standalone() || fsElement() || !landscape.matches || gateOff) return;
+    if (body.classList.contains('fs-gate')) return;
+    if (App.state === 'play' && App.game && !App.game.over) setState('pause'); // a partida não corre por baixo do aviso
+    releaseAll();
+    body.classList.add('fs-gate');
+  }
+  const hideGate = () => body.classList.remove('fs-gate');
+  gate.addEventListener('pointerdown', e => e.preventDefault());
+  gate.addEventListener('pointerup', () => { hideGate(); goFullscreen(true); });
+  $('fsgate-no').addEventListener('pointerup', e => { e.stopPropagation(); gateOff = true; hideGate(); });
+
+  const HINT_KEY = 'mataAdentro.dicaTelaInicio';
+  let hintShown = false, hintTimer = 0;
+  try { hintShown = sessionStorage.getItem(HINT_KEY) === '1'; } catch (e) { }
+  function showIOSHint() {
+    if (!isIOS || canFullscreen || standalone() || !landscape.matches || !body.classList.contains('touch')) return;
+    if (hintShown || store.get(HINT_KEY, false)) return; // uma vez por sessão; fechada no ✕, não volta mais
+    hintShown = true;
+    try { sessionStorage.setItem(HINT_KEY, '1'); } catch (e) { }
+    body.classList.add('ios-hint');
+    hintTimer = setTimeout(hideHint, 15000);
+  }
+  function hideHint() { clearTimeout(hintTimer); body.classList.remove('ios-hint'); }
+  hint.addEventListener('pointerdown', e => e.preventDefault());
+  $('ioshint-x').addEventListener('pointerup', () => { store.set(HINT_KEY, true); hideHint(); });
+
+  function onLandscape() { showGate(); showIOSHint(); }
+  // o giro chega por vários caminhos (media query, resize, orientationchange); age só quando a orientação muda de fato
+  let wasLandscape = landscape.matches;
+  function checkOrientation() {
+    const now = landscape.matches;
+    if (now === wasLandscape) return;
+    wasLandscape = now;
+    if (now) { gateOff = false; setTimeout(onLandscape, 200); } else { hideGate(); hideHint(); }
+  }
+  landscape.addEventListener('change', checkOrientation);
+  addEventListener('resize', checkOrientation);
+  addEventListener('orientationchange', () => setTimeout(checkOrientation, 250));
+  const onFsChange = () => { if (fsElement()) hideGate(); else setTimeout(showGate, 300); }; // saiu da tela cheia: oferece voltar
+  document.addEventListener('fullscreenchange', onFsChange);
+  document.addEventListener('webkitfullscreenchange', onFsChange);
+  if (landscape.matches) onLandscape(); // abriu já deitado
+
   // ---------------------------------------------------------- primeiro toque: tela cheia e áudio (o iOS só libera o som dentro de um gesto)
   if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (e) { } } // toca mesmo com a chave de silencioso (Safari 17+)
   function gesture(e) {
     if (e.type === 'pointerup' && e.pointerType === 'mouse') return;
-    goFullscreen();
+    const own = e.target && e.target.closest && e.target.closest('#fsgate, #fs, #ioshint'); // esses tratam a tela cheia sozinhos
+    if (!own && !body.classList.contains('fs-gate')) goFullscreen();
     if (!Snd.started) startAudio(); // também retoma o áudio "interrompido" do iOS ao voltar para o app
   }
   addEventListener('touchend', gesture, { capture: true });
