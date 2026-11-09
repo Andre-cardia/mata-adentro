@@ -473,9 +473,16 @@ function frame(now) {
   if (dtReal > 0.25) dtReal = 0.25; // aba voltou do segundo plano
   acc += dtReal;
   let steps = 0;
-  while (acc >= DT && steps < 5) { step(DT); acc -= DT; steps++; }
-  if (steps >= 5) acc = 0;
-  render(now);
+  // um erro pontual não pode congelar o jogo: registra e segue para o próximo quadro
+  try {
+    while (acc >= DT && steps < 5) { step(DT); acc -= DT; steps++; }
+    if (steps >= 5) acc = 0;
+    render(now);
+  } catch (e) {
+    if (!frame.errors) frame.errors = 0;
+    if (frame.errors++ < 5) console.error('Mata Adentro:', e);
+    acc = 0;
+  }
   fps.frames++; fps.t += dtReal;
   if (fps.t >= 1) { fps.value = fps.frames / fps.t; fps.frames = 0; fps.t = 0; }
   if (DEBUG) drawText(ctx, Math.round(fps.value) + ' FPS', 8, H - 14, 1, PAL.lime, 'left');

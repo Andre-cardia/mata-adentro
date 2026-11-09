@@ -1659,7 +1659,7 @@ class Game {
     let dx = 0, dy = 0, clipBottom = null;
     switch (p.state) {
       case 'vine': frames = Art.ze.swing; fi = 0; break;
-      case 'ladder': frames = Art.ze.climb; fi = Math.floor(p.y / 14) % 2; break;
+      case 'ladder': frames = Art.ze.climb; fi = ((Math.floor(p.y / 14) % 2) + 2) % 2; break; // y fica negativo ao chegar no subterrâneo
       case 'trip': frames = Art.ze.trip; fi = 0; break;
       case 'cheer': frames = Art.ze.cheer; fi = Math.floor(p.anim * 4) % 2; break;
       case 'dead':
@@ -1671,7 +1671,7 @@ class Game {
         if (!p.onGround) { frames = p.vy < 0 ? Art.ze.jump : Art.ze.fall; fi = 0; }
         else if (Math.abs(p.vx) > 20) { frames = Art.ze.run; fi = Math.floor(p.anim * 14) % 8; }
     }
-    const img = frames[fi % frames.length];
+    const img = frames[((fi % frames.length) + frames.length) % frames.length] || Art.ze.idle[0];
     ctx.save();
     if (clipBottom !== null) { ctx.beginPath(); ctx.rect(p.x - 60, -100, 120, clipBottom + 100); ctx.clip(); }
     ctx.translate(Math.round(p.x + dx), Math.round(p.y + dy));
@@ -2335,9 +2335,16 @@ function frame(now) {
   if (dtReal > 0.25) dtReal = 0.25; // aba voltou do segundo plano
   acc += dtReal;
   let steps = 0;
-  while (acc >= DT && steps < 5) { step(DT); acc -= DT; steps++; }
-  if (steps >= 5) acc = 0;
-  render(now);
+  // um erro pontual não pode congelar o jogo: registra e segue para o próximo quadro
+  try {
+    while (acc >= DT && steps < 5) { step(DT); acc -= DT; steps++; }
+    if (steps >= 5) acc = 0;
+    render(now);
+  } catch (e) {
+    if (!frame.errors) frame.errors = 0;
+    if (frame.errors++ < 5) console.error('Mata Adentro:', e);
+    acc = 0;
+  }
   fps.frames++; fps.t += dtReal;
   if (fps.t >= 1) { fps.value = fps.frames / fps.t; fps.frames = 0; fps.t = 0; }
   if (DEBUG) drawText(ctx, Math.round(fps.value) + ' FPS', 8, H - 14, 1, PAL.lime, 'left');

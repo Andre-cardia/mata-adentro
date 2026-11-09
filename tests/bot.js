@@ -74,6 +74,7 @@
       }
       press('ArrowRight', right); press('Space', jump); press('ArrowDown', down); press('ArrowUp', up && !jump);
       Input.poll(); g.update(1 / 60); frames++;
+      if (frames % 5 === 0) { g.draw(ctx, frames * 16.7); drawHUD(g, frames * 16.7); } // desenha também: pega erros de render
       const dead = g.p.state === 'dead';
       if (dead && !wasDead) deaths.push([g.p.deadKind, Math.round(g.p.x), g.levelId === 'surface' ? 'área ' + g.area : 'sub ' + g.levelId]);
       wasDead = dead;

@@ -491,7 +491,7 @@ class Game {
     let dx = 0, dy = 0, clipBottom = null;
     switch (p.state) {
       case 'vine': frames = Art.ze.swing; fi = 0; break;
-      case 'ladder': frames = Art.ze.climb; fi = Math.floor(p.y / 14) % 2; break;
+      case 'ladder': frames = Art.ze.climb; fi = ((Math.floor(p.y / 14) % 2) + 2) % 2; break; // y fica negativo ao chegar no subterrâneo
       case 'trip': frames = Art.ze.trip; fi = 0; break;
       case 'cheer': frames = Art.ze.cheer; fi = Math.floor(p.anim * 4) % 2; break;
       case 'dead':
@@ -503,7 +503,7 @@ class Game {
         if (!p.onGround) { frames = p.vy < 0 ? Art.ze.jump : Art.ze.fall; fi = 0; }
         else if (Math.abs(p.vx) > 20) { frames = Art.ze.run; fi = Math.floor(p.anim * 14) % 8; }
     }
-    const img = frames[fi % frames.length];
+    const img = frames[((fi % frames.length) + frames.length) % frames.length] || Art.ze.idle[0];
     ctx.save();
     if (clipBottom !== null) { ctx.beginPath(); ctx.rect(p.x - 60, -100, 120, clipBottom + 100); ctx.clip(); }
     ctx.translate(Math.round(p.x + dx), Math.round(p.y + dy));
