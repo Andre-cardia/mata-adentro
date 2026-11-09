@@ -4,7 +4,9 @@ Jogo de plataforma 2D de navegador: Zé Trilha atravessa a Mata Atlântica atrá
 
 ## Jogar
 
-Abra `dist/mata-adentro.html` em qualquer navegador desktop atual. O arquivo é único e já traz código, arte e áudio embutidos (3,4 MB).
+Online: https://andre-cardia.github.io/mata-adentro/
+
+Ou localmente: abra `dist/mata-adentro.html` em qualquer navegador desktop atual. O arquivo é único e já traz código, arte e áudio embutidos (3,4 MB).
 
 Parâmetros de URL:
 - `?seed=12345` abre uma trilha específica.
@@ -15,6 +17,8 @@ Parâmetros de URL:
 ```bash
 python3 build.py
 ```
+
+O comando também copia o jogo para `docs/index.html`, que é o que o GitHub Pages serve (branch `main`, pasta `/docs`). Depois de montar, faça commit de `dist/` e `docs/`.
 
 O comando junta os arquivos de `src/*.js` (em ordem numérica) com as faixas de `audio/enc/*.mp3`, convertidas em base64, e gera `dist/mata-adentro.html`.
 

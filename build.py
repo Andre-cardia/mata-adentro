@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mata Adentro — monta o jogo num único HTML (código + áudio embutido em base64).
 
-Uso: python3 build.py            -> dist/mata-adentro.html
+Uso: python3 build.py            -> dist/mata-adentro.html (e docs/index.html, para o GitHub Pages)
      python3 build.py --no-audio -> versão leve para testes rápidos
      python3 build.py --test     -> também gera dist/teste.html com o robô de testes (tests/bot.js)
 """
@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(ROOT, "src")
 ENC = os.path.join(ROOT, "audio", "enc")
 OUT = os.path.join(ROOT, "dist", "mata-adentro.html")
+PAGES = os.path.join(ROOT, "docs", "index.html")  # cópia servida pelo GitHub Pages (branch main, pasta /docs)
 
 def main():
     js = "\n".join(open(p, encoding="utf-8").read() for p in sorted(glob.glob(os.path.join(SRC, "*.js"))))
@@ -23,6 +24,9 @@ def main():
     html = html.replace("/*AUDIO*/", audio_js).replace("/*GAME*/", js.replace("</script", "<\\/script"))
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     open(OUT, "w", encoding="utf-8").write(html)
+    if "--no-audio" not in sys.argv:  # a versão leve nunca vai para o Pages
+        os.makedirs(os.path.dirname(PAGES), exist_ok=True)
+        open(PAGES, "w", encoding="utf-8").write(html)
     if "--test" in sys.argv:
         bot = open(os.path.join(ROOT, "tests", "bot.js"), encoding="utf-8").read()
         light = open(os.path.join(SRC, "index.html"), encoding="utf-8").read().replace("/*AUDIO*/", "const AUDIO_DATA = {};").replace("/*GAME*/", js + "\n" + bot)
